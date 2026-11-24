@@ -186,9 +186,23 @@ func cors(next http.Handler) http.Handler {
 		"http://127.0.0.1:5173": true,
 	}
 
+	// Domain frontend production dari environment variable.
+	frontendURLs := strings.Split(os.Getenv("FRONTEND_URL"), ",")
+
+	for _, origin := range frontendURLs {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowedOrigins[origin] = true
+		}
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-
+		log.Printf("CORS DEBUG: origin=%q allowed=%v method=%s",
+			origin,
+			allowedOrigins[origin],
+			r.Method,
+)
 		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
