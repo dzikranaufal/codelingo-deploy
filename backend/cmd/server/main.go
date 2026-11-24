@@ -186,24 +186,26 @@ func cors(next http.Handler) http.Handler {
 		"http://127.0.0.1:5173": true,
 	}
 
-	// Domain frontend production dari environment variable.
-	frontendURLs := strings.Split(os.Getenv("FRONTEND_URL"), ",")
-
-	for _, origin := range frontendURLs {
-		origin = strings.TrimSpace(origin)
+	// FRONTEND_URL: satu atau beberapa origin dipisah koma, tanpa "/" di akhir.
+	// Contoh: https://codelingo.vercel.app,https://codelingo-git-main-xxx.vercel.app
+	for _, origin := range strings.Split(os.Getenv("FRONTEND_URL"), ",") {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
 		if origin != "" {
 			allowedOrigins[origin] = true
 		}
 	}
 
+	list := make([]string, 0, len(allowedOrigins))
+	for origin := range allowedOrigins {
+		list = append(list, origin)
+	}
+	log.Printf("CORS origin diizinkan: %v", list)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		log.Printf("CORS DEBUG: origin=%q allowed=%v method=%s",
-			origin,
-			allowedOrigins[origin],
-			r.Method)
-			
-		if allowedOrigins[origin] {
+		allowed := allowedOrigins[origin]
+
+		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
@@ -211,11 +213,12 @@ func cors(next http.Handler) http.Handler {
 		}
 
 		if r.Method == http.MethodOptions {
-			if !allowedOrigins[origin] {
+			if !allowed {
+				log.Printf("CORS ditolak: origin=%q", origin)
 				http.Error(w, "origin tidak diizinkan", http.StatusForbidden)
 				return
 			}
-
+			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
