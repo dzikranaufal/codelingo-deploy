@@ -201,8 +201,8 @@ func cors(next http.Handler) http.Handler {
 		log.Printf("CORS DEBUG: origin=%q allowed=%v method=%s",
 			origin,
 			allowedOrigins[origin],
-			r.Method,
-)
+			r.Method)
+			
 		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
