@@ -63,7 +63,7 @@ func Load() Config {
 
 		Timezone: getEnv("APP_TIMEZONE", "Asia/Jakarta"),
 
-		ServerPort: getEnv("SERVER_PORT", "8080"),
+		ServerPort: getEnv("PORT", getEnv("SERVER_PORT", "8080")),
 		JWTSecret:  os.Getenv("JWT_SECRET"),
 	}
 }
