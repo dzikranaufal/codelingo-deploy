@@ -1,10 +1,20 @@
-// Seed data awal: bahasa C, satu path (C Beginner), 3 lesson, 9 soal pilihan ganda.
-// Aman dijalankan berulang: jika jalur sudah ada, seed dilewati.
-// Jalankan SETELAH migrasi: go run ./cmd/migrate lalu go run ./cmd/seed
+// Seed data bahasa C: 4 materi (learning path) x 5 lesson x 10 soal = 200 soal.
+//
+// Isi soal ada di file data_*.go pada folder yang sama (package main).
+//
+// Penggunaan:
+//
+//	go run ./cmd/seed               # aman diulang: path yang sudah ada dilewati
+//	go run ./cmd/seed -reset        # HAPUS semua path bahasa C lalu seed ulang (minta konfirmasi)
+//	go run ./cmd/seed -reset -yes   # sama, tanpa konfirmasi
+//
+// Tidak ada perubahan skema, jadi TIDAK perlu migrasi ulang.
 package main
 
 import (
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 
 	"codelingo/backend/internal/config"
@@ -15,11 +25,11 @@ import (
 )
 
 const (
-	pathName       = "C Beginner"
-	legacyPathName = "Dasar Pemrograman C" // nama lama; dianggap sudah ada
-	pathDesc       = "Belajar dasar-dasar bahasa C: variabel, tipe data, dan percabangan."
-	questionType   = "multiple_choice"
-	xpPerAnswer    = 10
+	questionType       = "multiple_choice"
+	xpPerAnswer        = 10
+	lessonsPerPath     = 5
+	questionsPerLesson = 10
+	optionsPerQuestion = 4
 )
 
 type seedQuestion struct {
@@ -35,171 +45,187 @@ type seedLesson struct {
 	Questions   []seedQuestion
 }
 
-var lessons = []seedLesson{
-	{
-		Title:       "Pengenalan Variabel",
-		Description: "Apa itu variabel dan cara mendeklarasikannya di C.",
-		Questions: []seedQuestion{
-			{
-				Text:        "Apa fungsi variabel dalam sebuah program?",
-				Explanation: "Variabel adalah tempat bernama di memori untuk menyimpan nilai yang bisa berubah saat program berjalan.",
-				Options: []string{
-					"Menampilkan teks ke layar",
-					"Menyimpan data di memori yang nilainya bisa diubah",
-					"Mengulang perintah berkali-kali",
-					"Menghentikan program",
-				},
-				Correct: 1,
-			},
-			{
-				Text:        "Manakah deklarasi variabel bilangan bulat yang benar di C?",
-				Explanation: "Di C, tipe data ditulis lebih dulu, lalu nama variabel, misalnya int umur = 17;",
-				Options: []string{
-					"umur int = 17;",
-					"integer umur = 17;",
-					"var umur = 17;",
-					"int umur = 17;",
-				},
-				Correct: 3,
-			},
-			{
-				Text:        "Manakah nama variabel yang TIDAK valid di C?",
-				Explanation: "Nama variabel tidak boleh diawali angka. Awali dengan huruf atau underscore (_).",
-				Options: []string{
-					"nama2",
-					"_nama",
-					"2nama",
-					"nama_siswa",
-				},
-				Correct: 2,
-			},
-		},
-	},
-	{
-		Title:       "Tipe Data",
-		Description: "Mengenal tipe data dasar di C: int, float, dan char.",
-		Questions: []seedQuestion{
-			{
-				Text:        "Tipe data apa yang paling cocok untuk menyimpan bilangan bulat seperti 25?",
-				Explanation: "int dipakai untuk bilangan bulat, sedangkan float dan double untuk bilangan pecahan.",
-				Options: []string{
-					"char",
-					"float",
-					"int",
-					"double",
-				},
-				Correct: 2,
-			},
-			{
-				Text:        "Tipe data apa yang dipakai untuk menyimpan satu karakter, misalnya 'A'?",
-				Explanation: "char menyimpan satu karakter dan ditulis dengan tanda kutip tunggal, misalnya 'A'. C tidak punya tipe string bawaan.",
-				Options: []string{
-					"string",
-					"char",
-					"float",
-					"bool",
-				},
-				Correct: 1,
-			},
-			{
-				Text:        "Berapa hasil 7 / 2 jika kedua angka bertipe int di C?",
-				Explanation: "Pembagian dua int menghasilkan int. Bagian pecahannya dibuang, sehingga 7 / 2 = 3.",
-				Options: []string{
-					"3.5",
-					"4",
-					"2",
-					"3",
-				},
-				Correct: 3,
-			},
-		},
-	},
-	{
-		Title:       "Percabangan (if-else)",
-		Description: "Mengambil keputusan di dalam program dengan if dan else.",
-		Questions: []seedQuestion{
-			{
-				Text:        "Kata kunci apa yang dipakai untuk menjalankan kode hanya jika suatu kondisi bernilai benar?",
-				Explanation: "if menjalankan blok kode hanya ketika kondisinya bernilai benar.",
-				Options: []string{
-					"for",
-					"while",
-					"if",
-					"return",
-				},
-				Correct: 2,
-			},
-			{
-				Text: `Apa output kode berikut?
-
-int x = 5;
-if (x > 3) printf("A"); else printf("B");`,
-				Explanation: "Karena 5 > 3 bernilai benar, bagian if dijalankan dan mencetak A.",
-				Options: []string{
-					"A",
-					"B",
-					"AB",
-					"Tidak ada output",
-				},
-				Correct: 0,
-			},
-			{
-				Text:        "Operator apa yang dipakai untuk memeriksa apakah dua nilai SAMA di C?",
-				Explanation: "== membandingkan dua nilai, sedangkan = adalah penugasan (assignment).",
-				Options: []string{
-					"=",
-					"==",
-					"=>",
-					"!=",
-				},
-				Correct: 1,
-			},
-		},
-	},
+type seedPath struct {
+	Name        string
+	Description string
+	OrderIndex  int
+	Lessons     []seedLesson
 }
 
-func main() {
-	cfg := config.Load()
+// q: helper singkat untuk membuat soal.
+func q(text, explanation string, correct int, options ...string) seedQuestion {
+	return seedQuestion{Text: text, Explanation: explanation, Options: options, Correct: correct}
+}
 
-	db, err := database.Connect(cfg)
-	if err != nil {
-		log.Fatalf("gagal terhubung ke database: %v", err)
+// Urutan di sini = urutan materi yang tampil (OrderIndex di tiap file data harus sama).
+var paths = []seedPath{
+	basicConcepts,
+	conditionalsLoops,
+	arraysStrings,
+	functionsPointers,
+}
+
+// validate memastikan data seed konsisten SEBELUM menyentuh database.
+func validate() error {
+	seenPath := map[string]bool{}
+	seenOrder := map[int]bool{}
+
+	for _, sp := range paths {
+		if seenPath[sp.Name] {
+			return fmt.Errorf("nama path ganda: %q", sp.Name)
+		}
+		seenPath[sp.Name] = true
+		if seenOrder[sp.OrderIndex] {
+			return fmt.Errorf("path %q: OrderIndex %d dipakai dua kali", sp.Name, sp.OrderIndex)
+		}
+		seenOrder[sp.OrderIndex] = true
+
+		if len(sp.Lessons) != lessonsPerPath {
+			return fmt.Errorf("path %q: %d lesson, seharusnya %d", sp.Name, len(sp.Lessons), lessonsPerPath)
+		}
+
+		seenQuestion := map[string]bool{}
+		for li, sl := range sp.Lessons {
+			if len(sl.Questions) != questionsPerLesson {
+				return fmt.Errorf("path %q lesson %d (%q): %d soal, seharusnya %d",
+					sp.Name, li+1, sl.Title, len(sl.Questions), questionsPerLesson)
+			}
+			for qi, sq := range sl.Questions {
+				where := fmt.Sprintf("path %q lesson %d soal %d", sp.Name, li+1, qi+1)
+
+				if sq.Text == "" || sq.Explanation == "" {
+					return fmt.Errorf("%s: teks atau penjelasan kosong", where)
+				}
+				if seenQuestion[sq.Text] {
+					return fmt.Errorf("%s: teks soal ganda dalam satu path", where)
+				}
+				seenQuestion[sq.Text] = true
+
+				if len(sq.Options) != optionsPerQuestion {
+					return fmt.Errorf("%s: %d opsi, seharusnya %d", where, len(sq.Options), optionsPerQuestion)
+				}
+				if sq.Correct < 0 || sq.Correct >= len(sq.Options) {
+					return fmt.Errorf("%s: indeks jawaban benar %d di luar jangkauan", where, sq.Correct)
+				}
+				seenOpt := map[string]bool{}
+				for _, o := range sq.Options {
+					if o == "" {
+						return fmt.Errorf("%s: ada opsi kosong", where)
+					}
+					if seenOpt[o] {
+						return fmt.Errorf("%s: opsi ganda %q", where, o)
+					}
+					seenOpt[o] = true
+				}
+			}
+		}
 	}
+	return nil
+}
 
-	err = db.Transaction(func(tx *gorm.DB) error {
-		var existing int64
-		if err := tx.Model(&models.LearningPath{}).Where("name IN ?", []string{pathName, legacyPathName}).Count(&existing).Error; err != nil {
+// ensureLanguage memastikan bahasa C ada.
+func ensureLanguage(db *gorm.DB) (models.Language, error) {
+	var lang models.Language
+	err := db.Where("slug = ?", "c").First(&lang).Error
+	if err == nil {
+		return lang, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return lang, err
+	}
+	lang = models.Language{Name: "C", Slug: "c", Description: "Belajar pemrograman dengan bahasa C.", IsAvailable: true}
+	return lang, db.Create(&lang).Error
+}
+
+// resetLanguagePaths menghapus SEMUA learning path milik bahasa C beserta
+// lesson, soal, dan opsinya, dalam satu transaksi (gagal = rollback total).
+// Jika ada tabel lain (mis. progres user) yang merujuk data ini lewat foreign key,
+// penghapusan akan gagal dan tidak ada yang berubah.
+func resetLanguagePaths(db *gorm.DB, lang models.Language) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var oldPaths []models.LearningPath
+		if err := tx.Where("language_id = ?", lang.ID).Find(&oldPaths).Error; err != nil {
 			return err
 		}
-		if existing > 0 {
-			log.Printf("seed dilewati: jalur %q sudah ada", pathName)
+		if len(oldPaths) == 0 {
+			log.Println("reset: tidak ada path bahasa C yang perlu dihapus")
 			return nil
 		}
 
-		// Pastikan bahasa C ada, lalu hubungkan path ke bahasa itu.
-		var lang models.Language
-		if err := tx.Where("slug = ?", "c").First(&lang).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
+		pathIDs := make([]any, 0, len(oldPaths))
+		for _, p := range oldPaths {
+			pathIDs = append(pathIDs, p.ID)
+		}
+
+		var links []models.LearningPathLesson
+		if err := tx.Where("learning_path_id IN ?", pathIDs).Find(&links).Error; err != nil {
+			return err
+		}
+		lessonIDs := make([]any, 0, len(links))
+		for _, l := range links {
+			lessonIDs = append(lessonIDs, l.LessonID)
+		}
+
+		questionCount := 0
+		if len(lessonIDs) > 0 {
+			var qs []models.Question
+			if err := tx.Where("lesson_id IN ?", lessonIDs).Find(&qs).Error; err != nil {
 				return err
 			}
-			lang = models.Language{Name: "C", Slug: "c", Description: "Belajar pemrograman dengan bahasa C.", IsAvailable: true}
-			if err := tx.Create(&lang).Error; err != nil {
-				return err
+			questionCount = len(qs)
+			if len(qs) > 0 {
+				questionIDs := make([]any, 0, len(qs))
+				for _, x := range qs {
+					questionIDs = append(questionIDs, x.ID)
+				}
+				if err := tx.Unscoped().Where("question_id IN ?", questionIDs).Delete(&models.AnswerOption{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Unscoped().Where("lesson_id IN ?", lessonIDs).Delete(&models.Question{}).Error; err != nil {
+					return err
+				}
 			}
 		}
 
+		if err := tx.Unscoped().Where("learning_path_id IN ?", pathIDs).Delete(&models.LearningPathLesson{}).Error; err != nil {
+			return err
+		}
+		if len(lessonIDs) > 0 {
+			if err := tx.Unscoped().Where("id IN ?", lessonIDs).Delete(&models.Lesson{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Unscoped().Where("id IN ?", pathIDs).Delete(&models.LearningPath{}).Error; err != nil {
+			return err
+		}
+
+		log.Printf("reset: dihapus %d path, %d lesson, %d soal", len(oldPaths), len(lessonIDs), questionCount)
+		return nil
+	})
+}
+
+// seedPathData membuat satu path beserta lesson, soal, dan opsinya dalam SATU transaksi.
+func seedPathData(db *gorm.DB, lang models.Language, sp seedPath) (created bool, questions int, err error) {
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var existing int64
+		if err := tx.Model(&models.LearningPath{}).Where("name = ?", sp.Name).Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing > 0 {
+			return nil // sudah ada, lewati
+		}
+
 		path := models.LearningPath{
-			Name:        pathName,
-			Description: pathDesc,
+			Name:        sp.Name,
+			Description: sp.Description,
 			LanguageID:  &lang.ID,
-			OrderIndex:  1,
+			OrderIndex:  sp.OrderIndex,
 		}
 		if err := tx.Create(&path).Error; err != nil {
 			return err
 		}
 
-		totalQuestions := 0
-		for i, sl := range lessons {
+		for i, sl := range sp.Lessons {
 			lesson := models.Lesson{Title: sl.Title, Description: sl.Description, Level: 1}
 			if err := tx.Create(&lesson).Error; err != nil {
 				return err
@@ -226,7 +252,7 @@ func main() {
 				if err := tx.Create(&question).Error; err != nil {
 					return err
 				}
-				totalQuestions++
+				questions++
 
 				for j, text := range sq.Options {
 					option := models.AnswerOption{
@@ -240,11 +266,66 @@ func main() {
 				}
 			}
 		}
-
-		log.Printf("seed selesai: 1 jalur, %d lesson, %d soal", len(lessons), totalQuestions)
+		created = true
 		return nil
 	})
+	return created, questions, err
+}
+
+func main() {
+	reset := flag.Bool("reset", false, "hapus SEMUA learning path bahasa C (beserta lesson & soal) sebelum seed")
+	yes := flag.Bool("yes", false, "lewati konfirmasi saat memakai -reset")
+	flag.Parse()
+
+	if err := validate(); err != nil {
+		log.Fatalf("data seed tidak valid: %v", err)
+	}
+
+	cfg := config.Load()
+
+	db, err := database.Connect(cfg)
 	if err != nil {
-		log.Fatalf("seed gagal (tidak ada data yang tersimpan): %v", err)
+		log.Fatalf("gagal terhubung ke database: %v", err)
+	}
+
+	lang, err := ensureLanguage(db)
+	if err != nil {
+		log.Fatalf("gagal menyiapkan bahasa C: %v", err)
+	}
+
+	if *reset {
+		if !*yes {
+			fmt.Println("PERINGATAN: semua learning path bahasa C beserta lesson dan soalnya akan DIHAPUS dari database ini.")
+			fmt.Print("Ketik YA (huruf besar) untuk lanjut: ")
+			var answer string
+			fmt.Scanln(&answer)
+			if answer != "YA" {
+				log.Fatal("dibatalkan, tidak ada data yang diubah")
+			}
+		}
+		if err := resetLanguagePaths(db, lang); err != nil {
+			log.Fatalf("reset gagal (rollback, tidak ada data yang berubah): %v", err)
+		}
+	}
+
+	createdPaths, createdQuestions, failed := 0, 0, 0
+	for _, sp := range paths {
+		created, n, err := seedPathData(db, lang, sp)
+		switch {
+		case err != nil:
+			failed++
+			log.Printf("GAGAL path %q (rollback, tidak ada data tersimpan untuk path ini): %v", sp.Name, err)
+		case !created:
+			log.Printf("dilewati: path %q sudah ada", sp.Name)
+		default:
+			createdPaths++
+			createdQuestions += n
+			log.Printf("dibuat: path %q (%d lesson, %d soal)", sp.Name, len(sp.Lessons), n)
+		}
+	}
+
+	log.Printf("seed selesai: %d path baru, %d soal baru, %d gagal", createdPaths, createdQuestions, failed)
+	if failed > 0 {
+		log.Fatal("ada path yang gagal di-seed, cek log di atas")
 	}
 }
