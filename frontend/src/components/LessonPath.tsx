@@ -180,9 +180,6 @@ export default function LessonPath({ units, onSelectNode }: LessonPathProps) {
                 <p className="unit__section">{unit.section}</p>
                 <h2 className="unit__title">{unit.title}</h2>
               </div>
-              <button type="button" className="unit__guide">
-                Buku panduan
-              </button>
             </header>
 
             <ol className="path">
