@@ -122,7 +122,10 @@ func (s *Service) Purchase(userID uint, item string) (*Response, error) {
 			return newErr(http.StatusConflict, Message(state))
 		}
 
-		updates := map[string]interface{}{"gems": u.Gems - cost}
+		// Pengurangan dilakukan relatif di SQL dan dijaga "gems >= cost": walau ada
+		// jalur lain yang mengubah saldo, saldo tidak pernah menjadi negatif dan
+		// pembelian yang tidak mampu dibayar ditolak (0 baris terpengaruh).
+		updates := map[string]interface{}{"gems": gorm.Expr("gems - ?", cost)}
 		switch item {
 		case ItemHeartRefill:
 			updates["lives"] = content.MaxLives
@@ -131,8 +134,12 @@ func (s *Service) Purchase(userID uint, item string) (*Response, error) {
 		case ItemStreakFreeze:
 			updates["streak_freezes"] = u.StreakFreezes + 1
 		}
-		if err := tx.Model(&models.User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
-			return internalErr("apply purchase", err)
+		res := tx.Model(&models.User{}).Where("id = ? AND gems >= ?", userID, cost).Updates(updates)
+		if res.Error != nil {
+			return internalErr("apply purchase", res.Error)
+		}
+		if res.RowsAffected != 1 {
+			return newErr(http.StatusConflict, Message(StateNotEnoughGem))
 		}
 
 		u.Gems -= cost

@@ -163,39 +163,6 @@ export default function App() {
           }
         />
 
-        <Route
-          path="/karakter"
-          element={
-            <RequireAuth>
-              <SidebarLayout defaultActive="Karakter">
-                <CharacterPage />
-              </SidebarLayout>
-            </RequireAuth>
-          }
-        />
-
-        <Route
-          path="/misi"
-          element={
-            <RequireAuth>
-              <SidebarLayout defaultActive="Misi">
-                <QuestPage />
-              </SidebarLayout>
-            </RequireAuth>
-          }
-        />
-
-        <Route
-          path="/toko"
-          element={
-            <RequireAuth>
-              <SidebarLayout defaultActive="Toko">
-                <ShopPage />
-              </SidebarLayout>
-            </RequireAuth>
-          }
-        />
-
         {/* Alamat yang tidak dikenal kembali ke landing page */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

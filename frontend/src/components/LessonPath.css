@@ -13,6 +13,7 @@
   box-sizing: border-box;
 }
 .learn__inner {
+  position: relative;
   max-width: 600px;
   margin: 0 auto;
   padding: 24px 16px 100px;
@@ -262,4 +263,23 @@
   .path__mascot {
     display: none;
   }
+}
+/* ---------- Garis putus-putus penghubung antar node ---------- */
+.learn__links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none; /* berada di bawah node dan banner (urutan DOM) */
+}
+.learn__link {
+  fill: none;
+  stroke: #d2d2d2;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 2 14;
+}
+.learn__link--done {
+  stroke: #58cc02;
 }

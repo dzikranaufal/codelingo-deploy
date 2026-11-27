@@ -2,9 +2,12 @@ package profile
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"time"
 
 	"codelingo/backend/internal/httpx"
+	"codelingo/backend/internal/media"
 	"codelingo/backend/internal/middleware"
 )
 
@@ -31,7 +34,7 @@ func (h *Handler) Profile(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		httpx.WriteJSON(w, http.StatusOK, NewResponse(user))
+		httpx.WriteJSON(w, http.StatusOK, h.Service.Build(user))
 
 	case http.MethodPatch:
 		var input updateInput
@@ -43,7 +46,7 @@ func (h *Handler) Profile(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, err, "nama harus 2 sampai 100 karakter")
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, NewResponse(user))
+		httpx.WriteJSON(w, http.StatusOK, h.Service.Build(user))
 
 	default:
 		httpx.MethodNotAllowed(w, http.MethodGet, http.MethodPatch)
@@ -74,6 +77,105 @@ func (h *Handler) Password(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"message": "password berhasil diubah"})
+}
+
+// Avatar menangani POST (unggah/ganti) dan DELETE /api/v1/profile/avatar.
+func (h *Handler) Avatar(w http.ResponseWriter, r *http.Request) { h.mediaRoute(w, r, media.KindAvatar) }
+
+// Banner menangani POST (unggah/ganti) dan DELETE /api/v1/profile/banner.
+func (h *Handler) Banner(w http.ResponseWriter, r *http.Request) { h.mediaRoute(w, r, media.KindBanner) }
+
+func (h *Handler) mediaRoute(w http.ResponseWriter, r *http.Request, kind string) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "token tidak valid")
+		return
+	}
+	svc := &media.Service{DB: h.Service.DB}
+
+	switch r.Method {
+	case http.MethodPost:
+		// Server memakai timeout 10 detik; unggahan gambar butuh lebih lama.
+		rc := http.NewResponseController(w)
+		_ = rc.SetReadDeadline(time.Now().Add(60 * time.Second))
+		_ = rc.SetWriteDeadline(time.Now().Add(60 * time.Second))
+
+		limit := media.MaxBytes(kind)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(limit)+(1<<20)) // + ruang untuk header multipart
+
+		data, err := readUpload(r, limit)
+		if err != nil {
+			writeMediaError(w, err)
+			return
+		}
+		if _, err := svc.Save(user.ID, kind, data); err != nil {
+			writeMediaError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, h.Service.Build(user))
+
+	case http.MethodDelete:
+		if err := svc.Delete(user.ID, kind); err != nil {
+			writeMediaError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, h.Service.Build(user))
+
+	default:
+		httpx.MethodNotAllowed(w, http.MethodPost, http.MethodDelete)
+	}
+}
+
+// readUpload membaca field multipart "file" secara streaming (tanpa file sementara)
+// dan menolak file yang lebih besar dari limit.
+func readUpload(r *http.Request, limit int) ([]byte, error) {
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return nil, media.ErrInvalidImage
+	}
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			return nil, media.ErrInvalidImage // field "file" tidak ada
+		}
+		if err != nil {
+			return nil, mapReadErr(err)
+		}
+		if part.FormName() != "file" {
+			_ = part.Close()
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(part, int64(limit)+1))
+		_ = part.Close()
+		if err != nil {
+			return nil, mapReadErr(err)
+		}
+		if len(data) > limit {
+			return nil, media.ErrTooLarge
+		}
+		return data, nil
+	}
+}
+
+func mapReadErr(err error) error {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		return media.ErrTooLarge
+	}
+	return media.ErrInvalidImage
+}
+
+func writeMediaError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, media.ErrTooLarge):
+		httpx.WriteError(w, http.StatusRequestEntityTooLarge, "ukuran gambar terlalu besar (foto maks. 2 MB, banner maks. 4 MB)")
+	case errors.Is(err, media.ErrUnsupported):
+		httpx.WriteError(w, http.StatusUnsupportedMediaType, "format gambar harus JPEG, PNG, GIF, atau WebP")
+	case errors.Is(err, media.ErrInvalidImage), errors.Is(err, media.ErrInvalidKind):
+		httpx.WriteError(w, http.StatusBadRequest, "file bukan gambar yang valid")
+	default:
+		httpx.WriteError(w, http.StatusInternalServerError, "terjadi kesalahan internal")
+	}
 }
 
 // Password salah dibalas 400 (bukan 401) agar interceptor frontend tidak

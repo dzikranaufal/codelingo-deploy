@@ -26,9 +26,10 @@
 
 /* ---------- Banner dan info ---------- */
 .profile-banner {
+  position: relative;
   height: 200px;
   border-radius: 20px;
-  background: #ddf4ff;
+  background: #ddf4ff center / cover no-repeat;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -235,4 +236,67 @@
   .profile-avatar {
     height: 130px;
   }
+}
+/* ---------- Unggah foto profil dan banner ---------- */
+.profile-banner__mascot {
+  height: 140px;
+  width: auto;
+  object-fit: contain;
+}
+.profile-banner__actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+}
+.profile-photo {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin: -48px 0 0 20px;
+  position: relative;
+}
+.profile-photo__img,
+.profile-photo__initial {
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: #1cb0f6;
+  object-fit: cover;
+}
+.profile-photo__initial {
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 800;
+}
+.profile-photo__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.media-btn {
+  padding: 8px 14px;
+  border: 2px solid var(--border);
+  border-bottom-width: 4px;
+  border-radius: 12px;
+  background: #fff;
+  color: #1cb0f6;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.media-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.profile-media-note {
+  margin: 8px 0 0;
+  font-size: 14px;
 }

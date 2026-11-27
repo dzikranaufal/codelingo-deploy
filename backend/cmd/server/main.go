@@ -15,7 +15,9 @@ import (
 	"codelingo/backend/internal/config"
 	"codelingo/backend/internal/content"
 	"codelingo/backend/internal/database"
+	"codelingo/backend/internal/follow"
 	"codelingo/backend/internal/leaderboard"
+	"codelingo/backend/internal/media"
 	"codelingo/backend/internal/middleware"
 	"codelingo/backend/internal/missions"
 	"codelingo/backend/internal/models"
@@ -57,6 +59,14 @@ func main() {
 		log.Fatalf("skema database belum siap: %v", err)
 	}
 
+	// Tabel fitur baru: server tetap jalan bila belum dimigrasi, tetapi fiturnya
+	// akan gagal sampai `go run ./cmd/migrate` dijalankan.
+	for _, table := range []string{"user_media", "follows"} {
+		if !db.Migrator().HasTable(table) {
+			log.Printf("PERINGATAN: tabel %s belum ada; jalankan `go run ./cmd/migrate`", table)
+		}
+	}
+
 	service := &auth.Service{
 		DB:        db,
 		JWTSecret: []byte(cfg.JWTSecret),
@@ -78,9 +88,18 @@ func main() {
 
 	mux.Handle("/api/v1/profile", authenticate(http.HandlerFunc(profileHandler.Profile)))
 	mux.Handle("/api/v1/profile/password", authenticate(http.HandlerFunc(profileHandler.Password)))
+	mux.Handle("/api/v1/profile/avatar", authenticate(http.HandlerFunc(profileHandler.Avatar)))
+	mux.Handle("/api/v1/profile/banner", authenticate(http.HandlerFunc(profileHandler.Banner)))
+
+	// Foto profil dan banner disajikan publik (tag <img> tidak bisa mengirim token).
+	mux.Handle(media.PathPrefix, http.HandlerFunc((&media.Service{DB: db}).Serve))
 
 	// Belajar (khusus pelajar)
 	requireLearner := middleware.RequireRole(models.RoleUser)
+
+	// Profil publik, follow/unfollow, daftar followers/following.
+	followHandler := &follow.Handler{Service: &follow.Service{DB: db}}
+	mux.Handle("/api/v1/users/", authenticate(requireLearner(http.HandlerFunc(followHandler.Routes))))
 
 	contentHandler := &content.Handler{
 		Service: &content.Service{DB: db},

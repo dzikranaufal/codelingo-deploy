@@ -1,12 +1,16 @@
 // frontend/src/pages/UserProfilePage.tsx
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import StatsBar from "../components/StatsBar";
 import Modal from "../components/Modal";
 import AchievementBadge from "../components/AchievementBadge";
 import { languages } from "../components/LanguageIcons";
 import { BoltIcon, ChevronIcon, FlameIcon, LeagueShield, MedalIcon } from "../components/ProfileIcons";
-import { ME_USERNAME, WEEK_DAYS, getProfile, type Achievement } from "../data/mockData";
+import { WEEK_DAYS, getProfile, type Achievement } from "../data/mockData";
+import { apiErrorMessage } from "../services/errors";
+import { mediaSrc } from "../services/mediaUrl";
+import { followUser, getFollowList, getPublicProfile, unfollowUser } from "../services/socialService";
+import type { PublicProfile, UserCard } from "../types/social";
 import { useMyStats } from "../hooks/useMyStats";
 import profileImg from "../assets/profile.png";
 import followersImg from "../assets/pengikut.png";
@@ -18,10 +22,19 @@ type Series = { label: string; values: number[]; color: string };
 // Pilihan alasan laporan. Daftar resmi nanti ditentukan backend.
 const REPORT_REASONS = ["Ketelanjangan", "Spam", "Lainnya"];
 
-// SEMENTARA: contoh daftar akun yang diikuti. Data asli datang dari backend.
-const FOLLOWING_EXAMPLE: Record<string, { name: string; xp: number }[]> = {
-  dimas_w: [{ name: "Bibin Mathew", xp: 8264 }],
-};
+function joinedText(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `Bergabung ${d.toLocaleDateString("id-ID", { month: "long", year: "numeric" })}`;
+}
+
+function Avatar({ name, src, className }: { name: string; src: string; className: string }) {
+  return src ? (
+    <img src={mediaSrc(src)} alt="" className={className} style={{ objectFit: "cover" }} />
+  ) : (
+    <span className={className}>{name.charAt(0).toUpperCase()}</span>
+  );
+}
 
 /* ---------- Grafik XP minggu ini (SVG) ---------- */
 function XpChart({ series }: { series: Series[] }) {
@@ -92,7 +105,15 @@ function ChevronDownIcon() {
 
 export default function UserProfilePage() {
   const { username = "" } = useParams();
-  const profile = getProfile(username);
+  // Data contoh (statistik, grafik, pencapaian) hanya ada untuk akun demo;
+  // identitas, foto, dan follow selalu dari backend.
+  const mock = getProfile(username);
+
+  const [real, setReal] = useState<PublicProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followError, setFollowError] = useState("");
+  const [list, setList] = useState<UserCard[]>([]);
 
   const [tab, setTab] = useState<"following" | "followers">("following");
   const [showLangs, setShowLangs] = useState(false);
@@ -104,7 +125,77 @@ export default function UserProfilePage() {
   const [reason, setReason] = useState("");
   const [reportedFor, setReportedFor] = useState("");
 
-  if (!profile) {
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setFollowError("");
+    getPublicProfile(username)
+      .then((p) => {
+        if (!cancelled) setReal(p);
+      })
+      .catch(() => {
+        if (!cancelled) setReal(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [username]);
+
+  // Daftar mengikuti/pengikut dimuat ulang saat tab atau jumlahnya berubah.
+  const realName = real?.username;
+  const followers = real?.followers_count;
+  const following = real?.following_count;
+  useEffect(() => {
+    if (!realName) return;
+    let cancelled = false;
+    getFollowList(realName, tab)
+      .then((d) => {
+        if (!cancelled) setList(d.users);
+      })
+      .catch(() => {
+        if (!cancelled) setList([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [realName, tab, followers, following]);
+
+  const toggleFollow = useCallback(
+    async (target: string, currentlyFollowing: boolean) => {
+      if (followBusy) return;
+      setFollowBusy(true);
+      setFollowError("");
+      try {
+        const updated = currentlyFollowing ? await unfollowUser(target) : await followUser(target);
+        if (target === username) {
+          setReal(updated);
+        } else {
+          // Baris pada daftar: muat ulang profil halaman ini agar jumlahnya akurat.
+          setReal(await getPublicProfile(username));
+        }
+      } catch (e) {
+        setFollowError(apiErrorMessage(e, "Gagal memperbarui status ikuti. Coba lagi."));
+      } finally {
+        setFollowBusy(false);
+      }
+    },
+    [followBusy, username],
+  );
+
+  if (loading) {
+    return (
+      <div className="shell">
+        <div className="shell__main">
+          <p role="status">Memuat profil...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!real) {
     return (
       <div className="shell">
         <div className="shell__main">
@@ -117,14 +208,15 @@ export default function UserProfilePage() {
     );
   }
 
-  const isMe = profile.username === ME_USERNAME;
-  const myWeekly = getProfile(ME_USERNAME)?.weeklyXp ?? [];
-  const series: Series[] = [{ label: profile.username, values: profile.weeklyXp, color: "#1cb0f6" }];
-  if (!isMe) series.push({ label: "Kamu", values: myWeekly, color: "#afafaf" });
-
-  const followingList = FOLLOWING_EXAMPLE[profile.username] ?? [];
-  const shownLangs = profile.languages.slice(0, 3);
-  const extraLangs = profile.languages.length - shownLangs.length;
+  const profile = {
+    username: real.username,
+    displayName: real.name,
+    joined: joinedText(real.joined_at),
+  };
+  const isMe = real.is_me;
+  const series: Series[] = mock ? [{ label: profile.username, values: mock.weeklyXp, color: "#1cb0f6" }] : [];
+  const shownLangs = mock ? mock.languages.slice(0, 3) : [];
+  const extraLangs = mock ? mock.languages.length - shownLangs.length : 0;
 
   const closeReport = () => {
     setShowReport(false);
@@ -141,8 +233,19 @@ export default function UserProfilePage() {
   return (
     <div className="shell">
       <div className="shell__main uprofile">
-        <div className="uprofile__banner">
-          <img src={profileImg} alt="" className="uprofile__photo" />
+        <div
+          className="uprofile__banner"
+          style={
+            real.banner_url
+              ? { backgroundImage: `url("${mediaSrc(real.banner_url)}")`, backgroundSize: "cover", backgroundPosition: "center" }
+              : undefined
+          }
+        >
+          {real.avatar_url ? (
+            <img src={mediaSrc(real.avatar_url)} alt="" className="uprofile__photo" style={{ borderRadius: "50%", objectFit: "cover" }} />
+          ) : (
+            <img src={profileImg} alt="" className="uprofile__photo" />
+          )}
         </div>
 
         <h1 className="uprofile__name">{profile.displayName}</h1>
@@ -151,11 +254,12 @@ export default function UserProfilePage() {
 
         <div className="uprofile__meta">
           <div className="uprofile__follow">
-            <span>mengikuti {followingList.length}</span>
-            <span>diikuti {profile.followers}</span>
+            <span>mengikuti {real.following_count}</span>
+            <span>diikuti {real.followers_count}</span>
           </div>
 
           {/* Ikon bahasa pemrograman yang dipelajari (pengganti bendera). Klik untuk melihat daftarnya. */}
+          {mock && (
           <button
             type="button"
             className="uprofile__langs"
@@ -172,11 +276,20 @@ export default function UserProfilePage() {
             })}
             {extraLangs > 0 && <span className="uprofile__more">+{extraLangs}</span>}
           </button>
+          )}
         </div>
 
         {/* Tombol Laporkan: membuka pop-up pilihan alasan. Tidak tampil di profil sendiri. */}
         {!isMe && (
           <div className="uprofile__actions">
+            <button
+              type="button"
+              className="uprofile__btn"
+              disabled={followBusy}
+              onClick={() => toggleFollow(real.username, real.is_following)}
+            >
+              <PersonPlusIcon /> {real.is_following ? "Berhenti mengikuti" : real.follows_you ? "Ikuti balik" : "Ikuti"}
+            </button>
             <button type="button" className="uprofile__btn" onClick={() => setShowReport(true)}>
               <FlagIcon /> Laporkan
             </button>
@@ -184,6 +297,11 @@ export default function UserProfilePage() {
               •••
             </button>
           </div>
+        )}
+        {followError && (
+          <p className="uprofile__note" role="alert">
+            {followError}
+          </p>
         )}
         {reportedFor === profile.username && (
           <p className="uprofile__note" role="status">
@@ -197,36 +315,43 @@ export default function UserProfilePage() {
           <h2>Statistik</h2>
         </div>
         <div className="uprofile__stats">
-          <div className="stat-card">
-            <FlameIcon on={profile.streak > 0} />
-            <div>
-              <b>{profile.streak}</b>
-              <span>Runtunan hari</span>
+          {mock && (
+            <div className="stat-card">
+              <FlameIcon on={mock.streak > 0} />
+              <div>
+                <b>{mock.streak}</b>
+                <span>Runtunan hari</span>
+              </div>
             </div>
-          </div>
+          )}
           <div className="stat-card">
             <BoltIcon />
             <div>
-              <b>{profile.totalXp}</b>
+              <b>{real.xp}</b>
               <span>Total XP</span>
             </div>
           </div>
           <div className="stat-card">
-            <LeagueShield tone={profile.leagueTone} />
-            <div>
-              <b>{profile.league}</b>
-              <span>Liga saat ini</span>
-            </div>
-            <em className="stat-card__tag">Minggu ke-{profile.leagueWeek}</em>
-          </div>
-          <div className="stat-card">
             <MedalIcon />
             <div>
-              <b>{profile.top3}</b>
-              <span>Posisi 3 besar</span>
+              <b>{real.level}</b>
+              <span>Level</span>
             </div>
           </div>
+          {mock && (
+            <div className="stat-card">
+              <LeagueShield tone={mock.leagueTone} />
+              <div>
+                <b>{mock.league}</b>
+                <span>Liga saat ini</span>
+              </div>
+              <em className="stat-card__tag">Minggu ke-{mock.leagueWeek}</em>
+            </div>
+          )}
         </div>
+
+        {mock && (
+          <>
 
         <div className="section-head">
           <h2>XP minggu ini</h2>
@@ -252,7 +377,7 @@ export default function UserProfilePage() {
         </div>
         {/* Lima pencapaian dalam satu baris */}
         <section className="panel uprofile__badges">
-          {profile.achievements.slice(0, 5).map((a) => (
+          {mock.achievements.slice(0, 5).map((a) => (
             <button
               key={a.id}
               type="button"
@@ -264,6 +389,8 @@ export default function UserProfilePage() {
             </button>
           ))}
         </section>
+          </>
+        )}
       </div>
 
       <aside className="shell__side">
@@ -291,32 +418,45 @@ export default function UserProfilePage() {
             </button>
           </div>
 
-          {tab === "following" ? (
-            followingList.length === 0 ? (
-              <p className="follow__empty">Belum mengikuti siapa pun</p>
-            ) : (
-              <ul className="follow__list">
-                {followingList.map((f) => (
-                  <li key={f.name} className="follow-row">
-                    <span className="follow-row__avatar">{f.name.charAt(0).toUpperCase()}</span>
-                    <div>
+          {list.length > 0 ? (
+            <ul className="follow__list">
+              {list.map((f) => (
+                <li key={f.username} className="follow-row">
+                  <Avatar name={f.name} src={f.avatar_url} className="follow-row__avatar" />
+                  <div>
+                    <Link to={`/pengguna/${f.username}`}>
                       <b>{f.name}</b>
-                      <span>{f.xp} XP</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )
+                    </Link>
+                    <span>{f.xp} XP</span>
+                  </div>
+                  {!f.is_me && (
+                    <button
+                      type="button"
+                      className="uprofile__btn"
+                      disabled={followBusy}
+                      onClick={() => toggleFollow(f.username, f.is_following)}
+                    >
+                      {f.is_following ? "Diikuti" : "Ikuti"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : tab === "following" ? (
+            <p className="follow__empty">Belum mengikuti siapa pun</p>
           ) : (
-            // SEMENTARA: semua akun contoh belum punya pengikut. Daftar asli datang dari backend.
             <div className="follow__box">
               <h3>Jadilah pengikut pertamanya!</h3>
               <img src={followersImg} alt="" className="follow__photo" />
               <p>Belajar lebih seru dan efektif saat kamu terhubung dengan yang lain.</p>
-              {/* Belum tersambung backend */}
               {!isMe && (
-                <button type="button" className="follow__btn">
-                  <PersonPlusIcon /> Ikuti
+                <button
+                  type="button"
+                  className="follow__btn"
+                  disabled={followBusy}
+                  onClick={() => toggleFollow(real.username, real.is_following)}
+                >
+                  <PersonPlusIcon /> {real.is_following ? "Diikuti" : "Ikuti"}
                 </button>
               )}
             </div>
@@ -325,10 +465,10 @@ export default function UserProfilePage() {
       </aside>
 
       {/* Daftar bahasa pemrograman yang dipelajari */}
-      {showLangs && (
+      {showLangs && mock && (
         <Modal title={`Bahasa ${profile.displayName}`} onClose={() => setShowLangs(false)}>
           <ul className="lang-list">
-            {profile.languages.map((l) => {
+            {mock.languages.map((l) => {
               const lang = languages.find((x) => x.id === l.id);
               if (!lang) return null;
               return (

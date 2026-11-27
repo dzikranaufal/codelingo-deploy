@@ -19,23 +19,31 @@ const NODE_STATUS: Record<LessonStatus, PathNode["status"]> = {
 
 // Jalur belajar dari backend (tabel learning_paths + lessons + progress).
 // Status tiap pelajaran dihitung backend; frontend hanya menampilkannya.
+// Semua path milik bahasa ditampilkan berurutan (order_index), tanpa batas jumlah.
+// Path tanpa pelajaran dilewati karena belum ada yang bisa dikerjakan.
+const UNIT_COLORS: PathUnit["color"][] = ["green", "blue", "purple"];
+
 function toUnits(data: LearningPath): PathUnit[] {
-  if (!data.path || data.lessons.length === 0) return [];
-  return [
-    {
-      id: `path-${data.path.id}`,
-      section: `Jalur ${data.language.name}`,
-      title: data.path.name,
-      color: "green",
-      nodes: data.lessons.map((l) => ({
+  // Cadangan untuk backend lama yang belum mengirim "paths".
+  const blocks =
+    data.paths ??
+    (data.path ? [{ ...data.path, order_index: 1, lessons: data.lessons }] : []);
+
+  return blocks
+    .filter((b) => b.lessons.length > 0)
+    .map((b, i) => ({
+      id: `path-${b.id}`,
+      section: `${data.language.name} · Path ${i + 1}`,
+      title: b.name,
+      color: UNIT_COLORS[i % UNIT_COLORS.length],
+      nodes: b.lessons.map((l) => ({
         id: String(l.id),
         type: "lesson" as const,
         status: NODE_STATUS[l.status],
         title: l.title,
         mascot: false,
       })),
-    },
-  ];
+    }));
 }
 
 function errorMessage(err: unknown): string {

@@ -54,10 +54,23 @@ type LessonNode struct {
 	Score         int    `json:"score"`
 }
 
+// PathBlock = satu learning path lengkap dengan pelajarannya. Seluruh path milik
+// satu bahasa dikirim berurutan menurut order_index (tanpa batas jumlah).
+type PathBlock struct {
+	ID          uint         `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	OrderIndex  int          `json:"order_index"`
+	Lessons     []LessonNode `json:"lessons"`
+}
+
+// PathResponse: Paths adalah daftar lengkap. Path dan Lessons dipertahankan demi
+// kompatibilitas klien lama dan berisi path aktif (sama seperti sebelumnya).
 type PathResponse struct {
 	Language LanguageInfo `json:"language"`
 	Path     *PathInfo    `json:"path"`
 	Lessons  []LessonNode `json:"lessons"`
+	Paths    []PathBlock  `json:"paths"`
 }
 
 // Step selalu bertipe "choice". Jawaban yang benar TIDAK ikut dikirim.
@@ -199,12 +212,17 @@ func (s *Service) lessonAccess(tx *gorm.DB, userID, lessonID uint) (*access, err
 		return &a, nil
 	}
 
+	// Urutan belajar: path menurut (order_index, id) dalam satu bahasa, lalu
+	// pelajaran menurut order_index di dalam path. Semua pelajaran yang berada
+	// sebelum pelajaran ini, termasuk di path sebelumnya, harus sudah selesai.
 	var pending int64
 	err = tx.Table("learning_path_lessons AS plp").
+		Joins("JOIN learning_paths lp ON lp.id = plp.learning_path_id").
 		Joins("LEFT JOIN progress pr ON pr.lesson_id = plp.lesson_id AND pr.user_id = ? AND pr.status = ?",
 			userID, models.ProgressCompleted).
-		Where("plp.learning_path_id = ? AND plp.order_index < ? AND pr.id IS NULL",
-			a.link.LearningPathID, a.link.OrderIndex).
+		Where("lp.language_id = ? AND pr.id IS NULL", *a.path.LanguageID).
+		Where("(lp.order_index < ? OR (lp.order_index = ? AND lp.id < ?) OR (lp.id = ? AND plp.order_index < ?))",
+			a.path.OrderIndex, a.path.OrderIndex, a.path.ID, a.path.ID, a.link.OrderIndex).
 		Count(&pending).Error
 	if err != nil {
 		return nil, internalErr("check previous lessons", err)
@@ -273,6 +291,7 @@ func (s *Service) pickPath(userID, languageID uint) (*models.LearningPath, error
 // ---------- operasi ----------
 
 type lessonRow struct {
+	PathID         uint
 	ID             uint
 	Title          string
 	Description    string
@@ -293,37 +312,59 @@ func (s *Service) LearningPath(userID uint, slug string) (*PathResponse, error) 
 	resp := &PathResponse{
 		Language: LanguageInfo{ID: lang.ID, Slug: lang.Slug, Name: lang.Name, IsAvailable: lang.IsAvailable},
 		Lessons:  []LessonNode{},
+		Paths:    []PathBlock{},
 	}
 	if !lang.IsAvailable {
 		return resp, nil
 	}
 
-	path, err := s.pickPath(userID, lang.ID)
+	// Path aktif (untuk kompatibilitas klien lama: field path dan lessons).
+	active, err := s.pickPath(userID, lang.ID)
 	if err != nil {
 		return nil, err
 	}
-	if path == nil {
+	if active == nil {
 		return resp, nil
 	}
-	resp.Path = &PathInfo{ID: path.ID, Name: path.Name, Description: path.Description}
+	resp.Path = &PathInfo{ID: active.ID, Name: active.Name, Description: active.Description}
+
+	// Seluruh path milik bahasa ini, tanpa batas jumlah, urut order_index.
+	var paths []models.LearningPath
+	if err := s.DB.Where("language_id = ?", lang.ID).
+		Order("order_index ASC, id ASC").Find(&paths).Error; err != nil {
+		return nil, internalErr("list paths", err)
+	}
 
 	var rows []lessonRow
 	err = s.DB.Table("learning_path_lessons AS plp").
-		Select("l.id AS id, l.title AS title, l.description AS description, plp.order_index AS order_index, "+
+		Select("plp.learning_path_id AS path_id, l.id AS id, l.title AS title, l.description AS description, "+
+			"plp.order_index AS order_index, "+
 			"(SELECT COUNT(*) FROM questions q WHERE q.lesson_id = l.id) AS question_count, "+
 			"COALESCE(pr.status, '') AS progress_status, COALESCE(pr.score, 0) AS score").
+		Joins("JOIN learning_paths lp ON lp.id = plp.learning_path_id").
 		Joins("JOIN lessons l ON l.id = plp.lesson_id").
 		Joins("LEFT JOIN progress pr ON pr.lesson_id = l.id AND pr.user_id = ?", userID).
-		Where("plp.learning_path_id = ?", path.ID).
-		Order("plp.order_index ASC, l.id ASC").
+		Where("lp.language_id = ?", lang.ID).
+		Order("lp.order_index ASC, lp.id ASC, plp.order_index ASC, l.id ASC").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, internalErr("list lessons", err)
 	}
 
-	// Aturan urutan sama dengan lessonAccess: pelajaran pertama yang belum selesai
-	// menjadi "current"; semua sesudahnya "locked". Pelajaran tanpa soal tidak bisa
-	// dimainkan sehingga ikut memblokir yang sesudahnya.
+	blocks := make([]PathBlock, 0, len(paths))
+	index := make(map[uint]int, len(paths))
+	for _, p := range paths {
+		index[p.ID] = len(blocks)
+		blocks = append(blocks, PathBlock{
+			ID: p.ID, Name: p.Name, Description: p.Description,
+			OrderIndex: p.OrderIndex, Lessons: []LessonNode{},
+		})
+	}
+
+	// Aturan urutan sama dengan lessonAccess dan berlaku lintas path: pelajaran
+	// pertama yang belum selesai menjadi "current"; semua sesudahnya "locked",
+	// termasuk seluruh pelajaran di path berikutnya. Pelajaran tanpa soal tidak
+	// bisa dimainkan sehingga ikut memblokir yang sesudahnya.
 	blocked := false
 	for _, r := range rows {
 		node := LessonNode{
@@ -342,7 +383,14 @@ func (s *Service) LearningPath(userID uint, slug string) (*PathResponse, error) 
 			node.Status = "current"
 			blocked = true
 		}
-		resp.Lessons = append(resp.Lessons, node)
+		if i, ok := index[r.PathID]; ok {
+			blocks[i].Lessons = append(blocks[i].Lessons, node)
+		}
+	}
+
+	resp.Paths = blocks
+	if i, ok := index[active.ID]; ok {
+		resp.Lessons = blocks[i].Lessons
 	}
 	return resp, nil
 }

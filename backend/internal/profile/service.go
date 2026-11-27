@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"codelingo/backend/internal/media"
 	"codelingo/backend/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
@@ -34,6 +35,11 @@ type Response struct {
 	XP       int    `json:"xp"`
 	Level    int    `json:"level"`
 	Lives    int    `json:"lives"`
+
+	AvatarURL      string `json:"avatar_url"` // kosong = belum ada foto
+	BannerURL      string `json:"banner_url"` // kosong = belum ada banner
+	FollowersCount int64  `json:"followers_count"`
+	FollowingCount int64  `json:"following_count"`
 }
 
 func NewResponse(u *models.User) Response {
@@ -48,6 +54,20 @@ func NewResponse(u *models.User) Response {
 		Level:    u.Level,
 		Lives:    u.Lives,
 	}
+}
+
+// Build = NewResponse + foto, banner, dan jumlah follower/following dari database.
+// Data tambahan bersifat pelengkap: kalau gagal dibaca, field-nya kosong/0.
+func (s *Service) Build(u *models.User) Response {
+	r := NewResponse(u)
+	r.AvatarURL, r.BannerURL = (&media.Service{DB: s.DB}).URLs(u.ID, u.Username)
+	if err := s.DB.Model(&models.Follow{}).Where("following_id = ?", u.ID).Count(&r.FollowersCount).Error; err != nil {
+		log.Printf("profile: gagal menghitung followers: %v", err)
+	}
+	if err := s.DB.Model(&models.Follow{}).Where("follower_id = ?", u.ID).Count(&r.FollowingCount).Error; err != nil {
+		log.Printf("profile: gagal menghitung following: %v", err)
+	}
+	return r
 }
 
 // UpdateName hanya mengubah kolom name. Kolom lain tidak bisa diubah dari sini.

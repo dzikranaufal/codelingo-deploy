@@ -13,7 +13,7 @@ const EMOJIS = ["😎", "🎉", "💪", "👀", "🍿", "💻", "🤓", "💯", 
 const AVATAR_COLORS = ["#ffa826", "#ff4b4b", "#ce82ff", "#1cb0f6", "#58cc02", "#ff86d0"];
 const LIMIT = 20;
 
-function Row({ entry, onOpenMe }: { entry: LeaderboardEntry; onOpenMe: () => void }) {
+function Row({ entry, onOpenMe, onOpenUser }: { entry: LeaderboardEntry; onOpenMe: () => void; onOpenUser: (username: string) => void }) {
   const cls = `lb__row${entry.is_me ? " lb__row--me" : ""}`;
   const body = (
     <>
@@ -28,18 +28,17 @@ function Row({ entry, onOpenMe }: { entry: LeaderboardEntry; onOpenMe: () => voi
       <span className="lb__xp">{entry.weekly_xp} XP</span>
     </>
   );
-  // Hanya baris sendiri yang bisa dibuka: belum ada endpoint profil publik.
-  return entry.is_me ? (
-    <button type="button" className={cls} onClick={onOpenMe}>
+  // Baris sendiri membuka profil sendiri; baris lain membuka profil publik (ikuti/berhenti mengikuti).
+  return (
+    <button type="button" className={cls} onClick={entry.is_me ? onOpenMe : () => onOpenUser(entry.username)}>
       {body}
     </button>
-  ) : (
-    <div className={cls}>{body}</div>
   );
 }
 
 export default function LeaderboardPage() {
   const navigate = useNavigate();
+  const openUser = (username: string) => navigate(`/pengguna/${encodeURIComponent(username)}`);
   const myStats = useMyStats();
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [error, setError] = useState("");
@@ -108,7 +107,7 @@ export default function LeaderboardPage() {
           <ol className="lb__list">
             {data.entries.map((e) => (
               <li key={e.username}>
-                <Row entry={e} onOpenMe={() => navigate("/profile")} />
+                <Row entry={e} onOpenMe={() => navigate("/profile")} onOpenUser={openUser} />
               </li>
             ))}
             {/* Peringkat kamu di luar daftar teratas */}
@@ -116,7 +115,7 @@ export default function LeaderboardPage() {
               <>
                 <li className="lb__zone">• • •</li>
                 <li>
-                  <Row entry={me} onOpenMe={() => navigate("/profile")} />
+                  <Row entry={me} onOpenMe={() => navigate("/profile")} onOpenUser={openUser} />
                 </li>
               </>
             )}

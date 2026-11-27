@@ -95,9 +95,17 @@
   font-weight: 700;
   color: #1cb0f6;
 }
-/* Profil: lingkaran putus-putus */
+/* Profil: lingkaran (foto pengguna, atau inisial username) */
+.sidebar__avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
 .sidebar__icon--round {
-  border: 2px dashed #afafaf;
+  overflow: hidden;
+  border: 2px solid #afafaf;
   border-radius: 50%;
   font-size: 14px;
   font-weight: 800;

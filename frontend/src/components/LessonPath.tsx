@@ -1,5 +1,5 @@
 // frontend/src/components/LessonPath.tsx
-import { type MouseEvent } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import maskot1 from "../assets/maskot1.png";
 import "./LessonPath.css";
 
@@ -107,7 +107,52 @@ function NodeIcon({ node }: { node: PathNode }) {
   return node.status === "done" ? <CheckIcon /> : <StarIcon />;
 }
 
+// Satu ruas garis putus-putus antara dua node berurutan.
+type Link = { key: string; d: string; done: boolean };
+
+// Kurva S (cubic Bezier) dari pusat node a ke pusat node b.
+function curve(x1: number, y1: number, x2: number, y2: number): string {
+  const dy = (y2 - y1) * 0.55;
+  return `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+}
+
 export default function LessonPath({ units, onSelectNode }: LessonPathProps) {
+  const innerRef = useRef<HTMLDivElement>(null);
+  const nodeEls = useRef(new Map<string, HTMLButtonElement>());
+  const [links, setLinks] = useState<Link[]>([]);
+
+  // Ukur posisi tiap node, lalu hubungkan semuanya berurutan (lintas path)
+  // dengan kurva putus-putus. Diukur ulang saat ukuran halaman berubah.
+  useLayoutEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+
+    const order = units.flatMap((u) => u.nodes.map((n) => ({ key: `${u.id}:${n.id}`, status: n.status })));
+
+    const measure = () => {
+      const box = inner.getBoundingClientRect();
+      const centers = order.map((n) => {
+        const el = nodeEls.current.get(n.key);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.left - box.left + r.width / 2, y: r.top - box.top + r.height / 2, status: n.status };
+      });
+      const next: Link[] = [];
+      for (let i = 0; i < centers.length - 1; i++) {
+        const a = centers[i];
+        const b = centers[i + 1];
+        if (!a || !b) continue;
+        next.push({ key: `${order[i].key}>${order[i + 1].key}`, d: curve(a.x, a.y, b.x, b.y), done: a.status === "done" });
+      }
+      setLinks(next);
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [units]);
+
   // Efek tekan: kelas "is-pressed" dipasang sesaat, animasi CSS menekan
   // ke bawah lalu memantul balik sendiri, kelas dilepas saat animasi selesai.
   const handleClick = (e: MouseEvent<HTMLButtonElement>, node: PathNode, unit: PathUnit) => {
@@ -120,7 +165,13 @@ export default function LessonPath({ units, onSelectNode }: LessonPathProps) {
 
   return (
     <div className="learn">
-      <div className="learn__inner">
+      <div className="learn__inner" ref={innerRef}>
+        {/* Garis putus-putus berbentuk kurva yang menghubungkan setiap node */}
+        <svg className="learn__links" aria-hidden="true">
+          {links.map((l) => (
+            <path key={l.key} d={l.d} className={`learn__link${l.done ? " learn__link--done" : ""}`} />
+          ))}
+        </svg>
         {units.map((unit) => (
           <section key={unit.id} className={`unit unit--${unit.color}`}>
             {/* Banner unit: menempel di atas saat di-scroll */}
@@ -145,6 +196,11 @@ export default function LessonPath({ units, onSelectNode }: LessonPathProps) {
 
                   <button
                     type="button"
+                    ref={(el) => {
+                      const key = `${unit.id}:${node.id}`;
+                      if (el) nodeEls.current.set(key, el);
+                      else nodeEls.current.delete(key);
+                    }}
                     className={`path-node path-node--${node.type} path-node--${node.status}`}
                     aria-label={`${TYPE_LABEL[node.type]}${node.title ? ` ${node.title}` : ""}, ${STATUS_LABEL[node.status]}`}
                     title={node.title}

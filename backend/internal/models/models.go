@@ -30,6 +30,8 @@ func All() []interface{} {
 		&XPEvent{},
 		&StreakFreezeDay{},
 		&QuestClaim{},
+		&UserMedia{},
+		&Follow{},
 	}
 }
 
@@ -93,6 +95,33 @@ type QuestClaim struct {
 	User User `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
 }
 
+
+// UserMedia = foto profil (kind "avatar") dan banner (kind "banner") milik user.
+// Gambar disimpan di database (bytea) dan hanya diakses lewat backend, sehingga
+// tidak butuh bucket storage terpisah. Satu user paling banyak satu baris per jenis.
+type UserMedia struct {
+	UserID      uint      `gorm:"primaryKey;autoIncrement:false" json:"user_id"`
+	Kind        string    `gorm:"primaryKey;size:10;check:chk_user_media_kind,kind IN ('avatar','banner')" json:"kind"`
+	ContentType string    `gorm:"size:50;not null" json:"content_type"`
+	Data        []byte    `gorm:"type:bytea;not null" json:"-"`
+	SizeBytes   int       `gorm:"not null;check:chk_user_media_size,size_bytes > 0" json:"size_bytes"`
+	UpdatedAt   time.Time `gorm:"not null" json:"updated_at"`
+
+	User User `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
+}
+
+func (UserMedia) TableName() string { return "user_media" }
+
+// Follow = relasi "follower mengikuti following". Kunci utama gabungan mencegah
+// follow ganda; check mencegah mengikuti diri sendiri.
+type Follow struct {
+	FollowerID  uint      `gorm:"primaryKey;autoIncrement:false;check:chk_follows_not_self,follower_id <> following_id" json:"follower_id"`
+	FollowingID uint      `gorm:"primaryKey;autoIncrement:false;index:idx_follows_following" json:"following_id"`
+	CreatedAt   time.Time `gorm:"not null" json:"created_at"`
+
+	Follower  User `gorm:"foreignKey:FollowerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
+	Following User `gorm:"foreignKey:FollowingID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
+}
 
 // LearningPath (ERD: Learning_Path).
 type LearningPath struct {
